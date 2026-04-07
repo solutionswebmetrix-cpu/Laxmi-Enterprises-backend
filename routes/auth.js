@@ -16,24 +16,31 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ message: 'Name, email, password, and schoolId are required' });
     }
 
-    // Check if an admin already exists if trying to signup as admin
-    if (role === 'admin') {
-      const adminExists = await User.findOne({ role: 'admin' });
-      if (adminExists) {
-        return res.status(400).json({ message: 'An owner account already exists. Only one owner is allowed.' });
-      }
-    }
-
+    // Check if user already exists
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
       return res.status(400).json({ message: 'Email already in use' });
+    }
+
+    // Check if any user already exists to determine if we should allow admin signup
+    const userCount = await User.countDocuments({});
+    
+    // Determine the role: first user is always admin, others depend on role sent
+    let finalRole = 'teacher';
+    if (userCount === 0) {
+      finalRole = 'admin'; // First user must be admin
+    } else if (role === 'admin') {
+      // If not the first user but trying to be admin
+      return res.status(400).json({ message: 'An owner account already exists. Only one owner is allowed.' });
+    } else {
+      finalRole = 'teacher';
     }
 
     const user = new User({
       name,
       email: email.toLowerCase(),
       password: await bcrypt.hash(password, 10),
-      role: role === 'admin' ? 'admin' : 'teacher',
+      role: finalRole,
       schoolId
     });
 
@@ -50,12 +57,20 @@ router.post('/signup', async (req, res) => {
 // @desc    Login user (admin/teacher)
 // @access  Public
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, role } = req.body; // Added role to destructuring
 
   try {
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
       return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    // Check if the role matches the requested login section
+    if (role && user.role !== role) {
+      const roleDisplayName = role === 'admin' ? 'Owner' : 'Staff';
+      return res.status(403).json({ 
+        message: `This account is not registered as ${roleDisplayName}. Please login in the correct section.` 
+      });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -171,12 +186,12 @@ router.get('/school-settings', auth, async (req, res) => {
 });
 
 // @route   GET /api/auth/check-admin
-// @desc    Check if an admin already exists
+// @desc    Check if any user exists (the first user must be admin)
 // @access  Public
 router.get('/check-admin', async (req, res) => {
   try {
-    const adminExists = await User.findOne({ role: 'admin' });
-    res.json({ exists: !!adminExists });
+    const userExists = await User.findOne({}); // Check for ANY user
+    res.json({ exists: !!userExists });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
